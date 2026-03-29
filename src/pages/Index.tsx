@@ -5,6 +5,8 @@ import PlinkoBoard from '@/components/game/PlinkoBoard';
 import PayoutTable from '@/components/game/PayoutTable';
 import ResultsHistory from '@/components/game/ResultsHistory';
 import SessionStats from '@/components/game/SessionStats';
+import Leaderboard from '@/components/game/Leaderboard';
+import EventLog from '@/components/game/EventLog';
 import { useGameState } from '@/hooks/useGameState';
 import { useCelebration } from '@/hooks/useCelebration';
 import { connectWallet } from '@/services/voiBlockchain';
@@ -142,6 +144,12 @@ export default function Index() {
           <div className="w-full max-w-[600px] grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SessionStats stats={game.stats} />
             <ResultsHistory results={game.results} />
+          </div>
+
+          {/* Leaderboard & Event Log */}
+          <div className="w-full max-w-[600px] grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Leaderboard />
+            <EventLog results={game.results} />
           </div>
 
           {/* Provably fair placeholder */}
