@@ -42,11 +42,14 @@ export default function Index() {
 
   const handleBallLand = useCallback((bucketIndex: number, multiplier: number) => {
     game.addResult(multiplier, bucketIndex);
+    celebrate(multiplier);
 
-    if (multiplier >= 2) {
+    if (multiplier >= 5) {
+      toast.success(`🔥 ${multiplier}x — HUGE WIN!`, { duration: 3000 });
+    } else if (multiplier >= 2) {
       toast.success(`🎉 ${multiplier}x — Nice win!`, { duration: 2000 });
     }
-  }, [game]);
+  }, [game, celebrate]);
 
   const handleAutoToggle = useCallback(() => {
     if (game.autoMode) {
