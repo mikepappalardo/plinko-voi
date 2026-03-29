@@ -95,7 +95,13 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background relative">
+      {/* Screen flash overlay */}
+      <div
+        ref={setFlashRef}
+        className="fixed inset-0 pointer-events-none z-50"
+        style={{ opacity: 0 }}
+      />
       <Header tokenMode={game.tokenMode} onConnectWallet={handleConnectWallet} />
 
       <main className="flex-1 container py-4">
