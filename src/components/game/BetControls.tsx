@@ -94,6 +94,26 @@ export default function BetControls({
         </div>
       </div>
 
+      {/* Board Size */}
+      <div>
+        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Board Size</p>
+        <div className="grid grid-cols-3 gap-2">
+          {BOARD_SIZES.map(size => (
+            <button
+              key={size}
+              onClick={() => onBoardRowsChange(size)}
+              className={`py-2 rounded-lg text-sm font-medium border transition-all ${
+                boardRows === size
+                  ? 'bg-accent/20 text-accent-foreground border-accent/40'
+                  : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary'
+              }`}
+            >
+              {size} rows
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Bet Amount */}
       <div>
         <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Bet Amount</p>
