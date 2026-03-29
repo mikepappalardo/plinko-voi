@@ -23,7 +23,7 @@ export default function EventLog({ results }: EventLogProps) {
               >
                 <span className="text-muted-foreground font-mono w-6 shrink-0">#{events.length - i}</span>
                 <span className="flex-1 text-muted-foreground">
-                  Ball → Bucket {r.bucketIndex + 1}
+                  Bet {r.bet} → {r.multiplier}×
                 </span>
                 <span
                   className={`font-mono font-semibold ${
