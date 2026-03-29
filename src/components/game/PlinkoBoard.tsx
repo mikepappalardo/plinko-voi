@@ -1,14 +1,15 @@
 import { useEffect, useRef, useCallback } from 'react';
 import Matter from 'matter-js';
-import { BOARD_CONFIG, PAYOUT_TABLES, RiskLevel } from '@/config/gameConfig';
+import { BOARD_CONFIG, PAYOUT_TABLES, RiskLevel, BoardSize } from '@/config/gameConfig';
 
 interface PlinkoBoardProps {
   risk: RiskLevel;
+  rows: BoardSize;
   onBallLand: (bucketIndex: number, multiplier: number) => void;
-  dropTrigger: number; // increment to drop a ball
+  dropTrigger: number;
 }
 
-export default function PlinkoBoard({ risk, onBallLand, dropTrigger }: PlinkoBoardProps) {
+export default function PlinkoBoard({ risk, rows, onBallLand, dropTrigger }: PlinkoBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Matter.Engine | null>(null);
   const renderRef = useRef<Matter.Render | null>(null);
@@ -17,7 +18,7 @@ export default function PlinkoBoard({ risk, onBallLand, dropTrigger }: PlinkoBoa
   const lastTriggerRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { rows, pegRadius, ballRadius, pegGap } = BOARD_CONFIG;
+  const { pegRadius, ballRadius, pegGap } = BOARD_CONFIG;
   const bucketCount = rows;
 
   const getCanvasSize = useCallback(() => {
@@ -136,7 +137,7 @@ export default function PlinkoBoard({ risk, onBallLand, dropTrigger }: PlinkoBoa
     // Draw bucket labels
     Matter.Events.on(render, 'afterRender', () => {
       const ctx = render.context;
-      const config = PAYOUT_TABLES[risk];
+      const config = PAYOUT_TABLES[rows][risk];
 
       for (let i = 0; i < bucketCount; i++) {
         const x = 10 + i * bucketWidth + bucketWidth / 2;
@@ -200,7 +201,7 @@ export default function PlinkoBoard({ risk, onBallLand, dropTrigger }: PlinkoBoa
 
         if (sensorBody && ballBody && ballBody.id === ball.id) {
           const bucketIndex = parseInt(sensorBody.label!.split('-')[1]);
-          const config = PAYOUT_TABLES[risk];
+          const config = PAYOUT_TABLES[rows][risk];
           const multiplier = config.multipliers[bucketIndex];
           onBallLand(bucketIndex, multiplier);
 

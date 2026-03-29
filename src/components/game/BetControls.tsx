@@ -1,14 +1,16 @@
-import { RiskLevel, BET_OPTIONS } from '@/config/gameConfig';
+import { RiskLevel, BoardSize, BET_OPTIONS, BOARD_SIZES } from '@/config/gameConfig';
 import { Minus, Plus, Zap, RotateCcw } from 'lucide-react';
 
 interface BetControlsProps {
   balance: number;
   risk: RiskLevel;
+  boardRows: BoardSize;
   betAmount: number;
   isDropping: boolean;
   autoMode: boolean;
   tokenMode: boolean;
   onRiskChange: (risk: RiskLevel) => void;
+  onBoardRowsChange: (rows: BoardSize) => void;
   onBetChange: (amount: number) => void;
   onDrop: () => void;
   onDropMultiple: (count: number) => void;
@@ -30,8 +32,8 @@ const riskStyles: Record<RiskLevel, string> = {
 };
 
 export default function BetControls({
-  balance, risk, betAmount, isDropping, autoMode, tokenMode,
-  onRiskChange, onBetChange, onDrop, onDropMultiple,
+  balance, risk, boardRows, betAmount, isDropping, autoMode, tokenMode,
+  onRiskChange, onBoardRowsChange, onBetChange, onDrop, onDropMultiple,
   onAutoToggle, onTokenModeToggle, onResetBalance,
 }: BetControlsProps) {
   const canBet = balance >= betAmount && !isDropping;
@@ -87,6 +89,26 @@ export default function BetControls({
               }`}
             >
               {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Board Size */}
+      <div>
+        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Board Size</p>
+        <div className="grid grid-cols-3 gap-2">
+          {BOARD_SIZES.map(size => (
+            <button
+              key={size}
+              onClick={() => onBoardRowsChange(size)}
+              className={`py-2 rounded-lg text-sm font-medium border transition-all ${
+                boardRows === size
+                  ? 'bg-accent/20 text-accent-foreground border-accent/40'
+                  : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary'
+              }`}
+            >
+              {size} rows
             </button>
           ))}
         </div>

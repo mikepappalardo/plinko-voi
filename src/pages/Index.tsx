@@ -111,11 +111,13 @@ export default function Index() {
             <BetControls
               balance={game.balance}
               risk={game.risk}
+              boardRows={game.boardRows}
               betAmount={game.betAmount}
               isDropping={game.isDropping}
               autoMode={game.autoMode}
               tokenMode={game.tokenMode}
               onRiskChange={game.setRisk}
+              onBoardRowsChange={game.setBoardRows}
               onBetChange={game.setBetAmount}
               onDrop={handleDrop}
               onDropMultiple={handleDropMultiple}
@@ -129,11 +131,12 @@ export default function Index() {
           <div className="order-1 lg:order-2 flex flex-col items-center">
             <PlinkoBoard
               risk={game.risk}
+              rows={game.boardRows}
               onBallLand={handleBallLand}
               dropTrigger={dropTrigger}
             />
             <div className="mt-4 w-full max-w-[500px]">
-              <PayoutTable risk={game.risk} />
+              <PayoutTable risk={game.risk} rows={game.boardRows} />
             </div>
           </div>
 
