@@ -6,11 +6,13 @@ import PayoutTable from '@/components/game/PayoutTable';
 import ResultsHistory from '@/components/game/ResultsHistory';
 import SessionStats from '@/components/game/SessionStats';
 import { useGameState } from '@/hooks/useGameState';
+import { useCelebration } from '@/hooks/useCelebration';
 import { connectWallet } from '@/services/voiBlockchain';
 import { toast } from 'sonner';
 
 export default function Index() {
   const game = useGameState();
+  const { celebrate, setFlashRef } = useCelebration();
   const [dropTrigger, setDropTrigger] = useState(0);
   const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
