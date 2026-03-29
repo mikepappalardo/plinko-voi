@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { RiskLevel, INITIAL_BALANCE } from '@/config/gameConfig';
+import { RiskLevel, BoardSize, INITIAL_BALANCE } from '@/config/gameConfig';
 
 export interface GameResult {
   id: string;
@@ -32,6 +32,7 @@ export interface GameState {
 export function useGameState() {
   const [balance, setBalance] = useState(INITIAL_BALANCE);
   const [risk, setRisk] = useState<RiskLevel>('medium');
+  const [boardRows, setBoardRows] = useState<BoardSize>(16);
   const [betAmount, setBetAmount] = useState(1);
   const [isDropping, setIsDropping] = useState(false);
   const [autoMode, setAutoMode] = useState(false);
@@ -81,8 +82,8 @@ export function useGameState() {
   }, []);
 
   return {
-    balance, risk, betAmount, isDropping, autoMode, tokenMode, results, stats,
-    setRisk, setBetAmount, setIsDropping, setAutoMode, setTokenMode,
+    balance, risk, boardRows, betAmount, isDropping, autoMode, tokenMode, results, stats,
+    setRisk, setBoardRows, setBetAmount, setIsDropping, setAutoMode, setTokenMode,
     addResult, deductBet, resetBalance,
   };
 }
