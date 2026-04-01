@@ -7,17 +7,14 @@ import ResultsHistory from '@/components/game/ResultsHistory';
 import SessionStats from '@/components/game/SessionStats';
 import Leaderboard from '@/components/game/Leaderboard';
 import EventLog from '@/components/game/EventLog';
+import { WalletConnector } from '@/components/WalletConnector';
 import { useGameState } from '@/hooks/useGameState';
 import { useCelebration } from '@/hooks/useCelebration';
-import {
-  connectWallet,
-  disconnectWallet,
-  getWalletState,
-  setWalletState,
-  submitPlinkoBet,
-  awaitGameResult,
-} from '@/services/voiBlockchain';
+import { useWallet } from '@txnlab/use-wallet-react';
+import { useWalletStore } from '@/lib/stores/walletStore';
+import { setSigner, submitPlinkoBet, awaitGameResult, PLINKO_APP_ID } from '@/services/voiBlockchain';
 import { toast } from 'sonner';
+import algosdk from 'algosdk';
 
 export default function Index() {
   const game = useGameState();
@@ -25,19 +22,29 @@ export default function Index() {
   const [dropTrigger, setDropTrigger] = useState(0);
   const [forceBucket, setForceBucket] = useState<number | null>(null);
   const [pendingTx, setPendingTx] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Pending on-chain result — resolved bucket/multiplier override
   const onChainResultRef = useRef<{ multiplier: number } | null>(null);
 
-  // ── Demo (token mode OFF) drop ──────────────────────────────────────────
-  const handleDrop = useCallback(() => {
-    if (game.tokenMode) return; // handled by handleOnChainDrop
-    if (!game.deductBet()) {
-      toast.error('Insufficient balance!');
-      return;
+  const { activeAddress, signTransactions } = useWallet();
+  const { connected, balance, refreshBalance } = useWalletStore();
+
+  // Keep voiBlockchain signer in sync with use-wallet
+  useEffect(() => {
+    if (activeAddress && signTransactions) {
+      setSigner(async (txns: algosdk.Transaction[]) => {
+        const encoded = txns.map(t => algosdk.encodeUnsignedTransaction(t));
+        const signed = await signTransactions(encoded);
+        return signed.map(s => new Uint8Array(s!));
+      }, activeAddress);
+    } else {
+      setSigner(null, null);
+      if (game.tokenMode) game.setTokenMode(false);
     }
+  }, [activeAddress, signTransactions]);
+
+  // ── Demo drop ──────────────────────────────────────────────────────────────
+  const handleDrop = useCallback(() => {
+    if (!game.deductBet()) { toast.error('Insufficient balance!'); return; }
     setForceBucket(null);
     onChainResultRef.current = null;
     game.setIsDropping(true);
@@ -45,66 +52,44 @@ export default function Index() {
     setTimeout(() => game.setIsDropping(false), 300);
   }, [game]);
 
-  // ── On-chain drop (token mode ON) ───────────────────────────────────────
+  // ── On-chain drop ──────────────────────────────────────────────────────────
   const handleOnChainDrop = useCallback(async () => {
     if (pendingTx) return;
-    const ws = getWalletState();
-    if (!ws.connected || !ws.address) {
-      toast.error('Connect your Voi wallet first');
-      return;
-    }
-    if (ws.balance < game.betAmount) {
-      toast.error('Insufficient VOI balance');
-      return;
-    }
+    if (!connected || !activeAddress) { toast.error('Connect your wallet first'); return; }
+    if (balance < game.betAmount) { toast.error('Insufficient VOI balance'); return; }
 
     setPendingTx(true);
     game.setIsDropping(true);
-    const toastId = toast.loading('Submitting bet on Voi Network...');
-
+    const toastId = toast.loading('Submitting to Voi Network...');
     try {
       const { txHash } = await submitPlinkoBet(game.betAmount, game.risk, game.boardRows);
       toast.loading('Waiting for confirmation...', { id: toastId });
-
       const result = await awaitGameResult(txHash);
 
-      // Store on-chain result for use in onBallLand
       onChainResultRef.current = { multiplier: result.multiplier };
-
-      // Update wallet balance
-      setWalletState({ connected: true, address: ws.address, balance: result.payout > 0 ? ws.balance - game.betAmount + result.payout : ws.balance - game.betAmount });
-
-      // Trigger ball drop aimed at the on-chain bucket
       setForceBucket(result.bucketIndex);
       setDropTrigger(prev => prev + 1);
+      refreshBalance();
 
-      toast.success(
-        result.multiplier >= 5
-          ? `🔥 ${result.multiplier.toFixed(2)}x — HUGE WIN! (${txHash.slice(0, 8)}...)`
-          : result.multiplier >= 1
-          ? `✓ ${result.multiplier.toFixed(2)}x (${txHash.slice(0, 8)}...)`
-          : `${result.multiplier.toFixed(2)}x — Better luck next time`,
-        { id: toastId, duration: 4000 }
-      );
+      const msg = result.multiplier >= 5
+        ? `🔥 ${result.multiplier.toFixed(2)}x — HUGE WIN!`
+        : result.multiplier >= 1
+        ? `✓ ${result.multiplier.toFixed(2)}x`
+        : `${result.multiplier.toFixed(2)}x`;
+      toast.success(`${msg} (${txHash.slice(0, 8)}...)`, { id: toastId, duration: 4000 });
     } catch (e: any) {
       toast.error(e.message ?? 'Transaction failed', { id: toastId });
     } finally {
       setPendingTx(false);
       setTimeout(() => game.setIsDropping(false), 400);
     }
-  }, [game, pendingTx]);
+  }, [game, pendingTx, connected, activeAddress, balance, refreshBalance]);
 
   const handleDropMultiple = useCallback((count: number) => {
-    if (game.tokenMode) {
-      toast.info('Multi-drop not available in token mode');
-      return;
-    }
+    if (game.tokenMode) { toast.info('Multi-drop not available in token mode'); return; }
     let dropped = 0;
     const interval = setInterval(() => {
-      if (dropped >= count || game.balance < game.betAmount) {
-        clearInterval(interval);
-        return;
-      }
+      if (dropped >= count || game.balance < game.betAmount) { clearInterval(interval); return; }
       if (game.deductBet()) {
         setForceBucket(null);
         onChainResultRef.current = null;
@@ -114,128 +99,70 @@ export default function Index() {
     }, 200);
   }, [game]);
 
-  // Called by PlinkoBoard when ball lands
   const handleBallLand = useCallback((bucketIndex: number, multiplier: number) => {
-    // In token mode, use the on-chain multiplier (not physics-derived)
     const finalMultiplier = game.tokenMode && onChainResultRef.current != null
       ? onChainResultRef.current.multiplier
       : multiplier;
-
-    if (!game.tokenMode) {
-      game.addResult(finalMultiplier, bucketIndex);
-    } else {
-      // In token mode balance is managed by the chain — just record the result
-      game.addResult(finalMultiplier, bucketIndex);
-    }
-
+    game.addResult(finalMultiplier, bucketIndex);
     celebrate(finalMultiplier);
     onChainResultRef.current = null;
-
-    if (finalMultiplier >= 5) {
-      toast.success(`🔥 ${finalMultiplier}x — HUGE WIN!`, { duration: 3000 });
-    } else if (finalMultiplier >= 2) {
-      toast.success(`🎉 ${finalMultiplier}x — Nice win!`, { duration: 2000 });
-    }
+    if (finalMultiplier >= 5) toast.success(`🔥 ${finalMultiplier}x — HUGE WIN!`, { duration: 3000 });
+    else if (finalMultiplier >= 2) toast.success(`🎉 ${finalMultiplier}x`, { duration: 2000 });
   }, [game, celebrate]);
 
   const handleAutoToggle = useCallback(() => {
-    if (game.tokenMode) {
-      toast.info('Auto mode not available in token mode');
-      return;
-    }
-    if (game.autoMode) {
-      game.setAutoMode(false);
-      if (autoIntervalRef.current) {
-        clearInterval(autoIntervalRef.current);
-        autoIntervalRef.current = null;
-      }
-    } else {
-      game.setAutoMode(true);
-    }
+    if (game.tokenMode) { toast.info('Auto mode not available in token mode'); return; }
+    game.setAutoMode(!game.autoMode);
   }, [game]);
 
-  // Auto-drop (demo only)
   useEffect(() => {
     if (game.autoMode && !game.tokenMode) {
       autoIntervalRef.current = setInterval(() => {
-        if (game.balance >= game.betAmount) {
-          if (game.deductBet()) {
-            setForceBucket(null);
-            onChainResultRef.current = null;
-            setDropTrigger(prev => prev + 1);
-          }
+        if (game.balance >= game.betAmount && game.deductBet()) {
+          setForceBucket(null);
+          onChainResultRef.current = null;
+          setDropTrigger(prev => prev + 1);
         } else {
           game.setAutoMode(false);
         }
       }, 800);
     }
-    return () => {
-      if (autoIntervalRef.current) {
-        clearInterval(autoIntervalRef.current);
-        autoIntervalRef.current = null;
-      }
-    };
+    return () => { if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; } };
   }, [game.autoMode, game.tokenMode, game]);
 
-  // Wallet connect/disconnect
-  const handleConnectWallet = async () => {
-    try {
-      const wallet = await connectWallet();
-      setWalletAddress(wallet.address);
-      toast.success(`Connected: ${wallet.address?.slice(0, 8)}...`);
-    } catch (e: any) {
-      toast.error(e.message ?? 'Wallet connection failed');
+  const handleTokenModeToggle = () => {
+    if (!game.tokenMode && !connected) {
+      toast.info('Connect your wallet to enable Token Mode');
+      return;
     }
-  };
-
-  const handleDisconnect = async () => {
-    await disconnectWallet();
-    setWalletAddress(null);
-    game.setTokenMode(false);
-    toast.info('Wallet disconnected');
-  };
-
-  // Sync token mode toggle — require wallet
-  const handleTokenModeToggle = async () => {
-    if (!game.tokenMode) {
-      const ws = getWalletState();
-      if (!ws.connected) {
-        try {
-          const wallet = await connectWallet();
-          setWalletAddress(wallet.address);
-          game.setTokenMode(true);
-          toast.success(`Token mode on — ${wallet.address?.slice(0, 8)}...`);
-        } catch (e: any) {
-          toast.error(e.message ?? 'Connect wallet to use token mode');
-        }
-      } else {
-        game.setTokenMode(true);
-      }
-    } else {
-      game.setTokenMode(false);
-    }
+    game.setTokenMode(!game.tokenMode);
   };
 
   const activeDrop = game.tokenMode ? handleOnChainDrop : handleDrop;
+  const displayBalance = game.tokenMode ? balance : game.balance;
 
   return (
     <div className="min-h-screen flex flex-col bg-background relative">
-      <div
-        ref={setFlashRef}
-        className="fixed inset-0 pointer-events-none z-50"
-        style={{ opacity: 0 }}
-      />
-      <Header
-        tokenMode={game.tokenMode}
-        onConnectWallet={walletAddress ? handleDisconnect : handleConnectWallet}
-        walletAddress={walletAddress}
-      />
+      <div ref={setFlashRef} className="fixed inset-0 pointer-events-none z-50" style={{ opacity: 0 }} />
+
+      {/* Header with WalletConnector */}
+      <header className="flex items-center justify-between px-4 py-3 glass-strong">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+            <span className="text-primary font-heading font-bold text-sm">V</span>
+          </div>
+          <h1 className="font-heading font-bold text-lg text-foreground">
+            Voi <span className="text-primary text-glow-primary">Plinko</span>
+          </h1>
+        </div>
+        <WalletConnector />
+      </header>
 
       <main className="flex-1 container py-4">
         <div className="flex flex-col items-center gap-4 max-w-6xl mx-auto">
           <div className="w-full max-w-[600px]">
             <BetControls
-              balance={game.tokenMode ? getWalletState().balance : game.balance}
+              balance={displayBalance}
               risk={game.risk}
               boardRows={game.boardRows}
               betAmount={game.betAmount}
@@ -275,20 +202,19 @@ export default function Index() {
             <EventLog results={game.results} />
           </div>
 
-          {/* Provably fair */}
           <div className="glass rounded-xl p-4 w-full max-w-[600px]">
             <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Provably Fair</h3>
             {game.tokenMode ? (
               <p className="text-xs text-muted-foreground">
-                Results are derived on-chain from <code className="text-primary">sha256(txID + round)</code> — verifiable by anyone on Voi Network. App ID: <code className="text-primary">49028406</code>
+                Results are derived on-chain from <code className="text-primary">sha256(txID + round)</code> — verifiable by anyone on Voi Network.
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Enable Token Mode to play with real VOI on Voi Network. Results are provably fair via on-chain randomness.
+                Connect a wallet and enable Token Mode to play with real VOI — provably fair via on-chain randomness.
               </p>
             )}
             <div className="mt-2 px-3 py-2 rounded-lg bg-secondary/50 text-xs text-muted-foreground font-mono">
-              {game.tokenMode ? `Contract: 49028406 | Network: Voi Mainnet` : 'Mode: Demo (no real tokens)'}
+              {game.tokenMode ? `App ID: ${PLINKO_APP_ID} | Voi Mainnet` : 'Mode: Demo'}
             </div>
           </div>
         </div>
