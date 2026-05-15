@@ -13,8 +13,8 @@ const client = new algosdk.Algodv2('', ALGOD_URL, '');
 const SEL = (sig: string) => algosdk.ABIMethod.fromSignature(sig).getSelector();
 
 export default function App() {
-  const { activeAccount, activeWallet, wallets } = useWallet();
-  const account = activeAccount?.address ?? null;
+  const { activeAddress, activeWallet, wallets, transactionSigner } = useWallet();
+  const account = activeAddress ?? null;
 
   const [betAmount, setBetAmount] = useState(1);
   const [risk, setRisk] = useState<RiskLevel>(0);
@@ -33,8 +33,7 @@ export default function App() {
   // Sign txns via use-wallet
   const sign = async (txns: algosdk.Transaction[]): Promise<Uint8Array[]> => {
     if (!activeWallet) throw new Error('No wallet connected');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (activeWallet as any).transactionSigner(txns, txns.map((_: any, i: number) => i));
+    return transactionSigner(txns, txns.map((_, i) => i));
   };
 
   // Poll opt-in + pending state
