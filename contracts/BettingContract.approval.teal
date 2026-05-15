@@ -49,9 +49,9 @@ main___algopy_default_create@16:
 // contract.BettingContract.create_application[routing]() -> void:
 create_application:
     // contract.py:32
-    // self.house.value = Account("KZGWTTEQNSTBVFNQNEWKO4KJV6R3DRBZOAR7A36TOUFDHXIVNJUMTELF7U")
+    // self.house.value = Account("FJGK236YTKQ5UZRYJK5HQIKL2PSSFO3TWWVL4XIJDFTH3CBSRGURDUFVRA")
     bytec_2 // 0x686f757365
-    pushbytes base32(KZGWTTEQNSTBVFNQNEWKO4KJV6R3DRBZOAR7A36TOUFDHXIVNJUA) // addr KZGWTTEQNSTBVFNQNEWKO4KJV6R3DRBZOAR7A36TOUFDHXIVNJUMTELF7U
+    pushbytes base32(FJGK236YTKQ5UZRYJK5HQIKL2PSSFO3TWWVL4XIJDFTH3CBSRGURDUFVRA) // addr FJGK236YTKQ5UZRYJK5HQIKL2PSSFO3TWWVL4XIJDFTH3CBSRGURDUFVRA
     app_global_put
     // contract.py:33
     // self.total_bets.value = UInt64(0)

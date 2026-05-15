@@ -1,147 +1,150 @@
 import { useEffect, useRef, useState } from 'react';
+import { MULTIPLIERS, ROWS } from './config';
 
-interface Props {
-  rows: number;
-  risk: 'low' | 'mid' | 'high';
+interface PlinkoBoardProps {
+  rows?: number;
+  riskLevel: 0 | 1 | 2;
   dropping: boolean;
-  onLand: (bucket: number) => void;
+  onLand: (bucketIndex: number) => void;
+  result?: number | null; // bucket index from contract
 }
 
-const PLINK_SIZE = 10;
-const BALL_R = 8;
-const COL_W = 36;
+const RISK_LABELS = ['Low', 'Mid', 'High'];
+const RISK_COLORS = ['#00a39e', '#f0b800', '#ef4444'];
 
-export default function PlinkoBoard({ rows, risk, dropping, onLand }: Props) {
+export default function PlinkoBoard({ rows = ROWS, riskLevel, dropping, onLand, result }: PlinkoBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const [ballPos, setBallPos] = useState<{ x: number; y: number } | null>(null);
+  const [landed, setLanded] = useState<number | null>(null);
 
-  const cols = rows + 1;
-  const W = cols * COL_W + COL_W;
-  const H = rows * 40 + 80;
+  const W = 520;
+  const H = 480;
+  const PAD = 40;
+  const COLS = rows + 1;
+  const colW = (W - PAD * 2) / (COLS - 1);
+  const rowH = (H - PAD * 2 - 60) / rows;
 
-  // Peg positions
-  const pegs: [number, number][] = [];
+  // Pin positions
+  const pins: { x: number; y: number }[] = [];
   for (let r = 0; r < rows; r++) {
     const count = r + 2;
-    const offset = (W - (count - 1) * COL_W) / 2;
+    const startX = PAD + ((COLS - 1 - r) / 2) * colW;
     for (let c = 0; c < count; c++) {
-      pegs.push([offset + c * COL_W, 60 + r * 40]);
+      pins.push({ x: startX + c * colW, y: PAD + r * rowH + rowH });
     }
   }
 
-  const bucketColors: Record<string, string[]> = {
-    low:  ['#22c55e','#4ade80','#86efac','#d1fae5','#fef9c3','#fde68a','#22c55e'],
-    mid:  ['#f59e0b','#fbbf24','#fcd34d','#fef9c3','#fde68a','#fbbf24','#f59e0b'],
-    high: ['#ef4444','#f97316','#fbbf24','#fef9c3','#fde68a','#f97316','#ef4444'],
-  };
-
-  function drawBoard(ctx: CanvasRenderingContext2D, bx?: number, by?: number) {
+  // Draw board
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, W, H);
 
     // Background
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#0d1b2e';
     ctx.fillRect(0, 0, W, H);
 
-    // Pegs
-    pegs.forEach(([px, py]) => {
-      ctx.beginPath();
-      ctx.arc(px, py, PLINK_SIZE / 2, 0, Math.PI * 2);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fill();
-    });
+    // Multiplier buckets
+    const risk = ['low', 'mid', 'high'][riskLevel] as keyof typeof MULTIPLIERS;
+    const mults = MULTIPLIERS[risk];
+    const bucketW = colW;
+    const bucketY = H - 55;
 
-    // Buckets
-    const bucketY = 60 + rows * 40 + 10;
-    const colors = bucketColors[risk];
-    for (let i = 0; i < cols; i++) {
-      const bw = COL_W - 4;
-      const bxPos = (W - cols * COL_W) / 2 + i * COL_W + 2;
-      const color = colors[Math.min(i < cols / 2 ? i : cols - 1 - i, colors.length - 1)];
-      ctx.fillStyle = color + '44';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+    for (let i = 0; i < COLS; i++) {
+      const bx = PAD + i * colW - bucketW / 2;
+      const mult = mults[Math.min(i, mults.length - 1)];
+      const isLanded = landed === i;
+
+      ctx.fillStyle = isLanded ? '#00a39e' : mult >= 2 ? '#1a3a2a' : mult >= 1 ? '#2a2a1a' : '#2a1a1a';
+      ctx.strokeStyle = isLanded ? '#00ffee' : '#ffffff22';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(bxPos, bucketY, bw, 28, 4);
+      ctx.beginPath(); ctx.moveTo(bx+6, bucketY); ctx.lineTo(bx+bucketW-6, bucketY); ctx.quadraticCurveTo(bx+bucketW-2, bucketY, bx+bucketW-2, bucketY+4); ctx.lineTo(bx+bucketW-2, bucketY+40); ctx.quadraticCurveTo(bx+bucketW-2, bucketY+44, bx+bucketW-6, bucketY+44); ctx.lineTo(bx+6, bucketY+44); ctx.quadraticCurveTo(bx+2, bucketY+44, bx+2, bucketY+40); ctx.lineTo(bx+2, bucketY+4); ctx.quadraticCurveTo(bx+2, bucketY, bx+6, bucketY); ctx.closePath();
       ctx.fill();
       ctx.stroke();
+
+      ctx.fillStyle = isLanded ? '#fff' : mult >= 5 ? '#00ffee' : mult >= 1 ? '#f0b800' : '#ff6666';
+      ctx.font = `bold ${mult >= 10 ? 10 : 12}px Poppins, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${mult}x`, PAD + i * colW, bucketY + 26);
+    }
+
+    // Pins
+    for (const pin of pins) {
+      ctx.beginPath();
+      ctx.arc(pin.x, pin.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff88';
+      ctx.fill();
     }
 
     // Ball
-    if (bx !== undefined && by !== undefined) {
+    if (ballPos) {
       ctx.beginPath();
-      ctx.arc(bx, by, BALL_R, 0, Math.PI * 2);
-      const grad = ctx.createRadialGradient(bx - 2, by - 2, 1, bx, by, BALL_R);
-      grad.addColorStop(0, '#fef08a');
-      grad.addColorStop(1, '#f59e0b');
-      ctx.fillStyle = grad;
+      ctx.arc(ballPos.x, ballPos.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#f0b800';
+      ctx.shadowColor = '#f0b800';
+      ctx.shadowBlur = 12;
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
-  }
+  }, [ballPos, landed, riskLevel, rows]);
 
+  // Animate drop when result comes in
   useEffect(() => {
-    if (!dropping) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
+    if (result === null || result === undefined || !dropping) return;
 
-    // Simulate path
-    let x = W / 2;
-    let pegRow = 0;
-    const path: [number, number][] = [[x, 20]];
-    const dirs: number[] = [];
+    setLanded(null);
+    setBallPos(null);
 
-    for (let r = 0; r < rows; r++) {
-      const d = Math.random() < 0.5 ? -1 : 1;
-      dirs.push(d);
-      x += d * COL_W / 2;
-      path.push([x, 60 + r * 40]);
+    // Simulate path: ball falls through rows, bouncing left/right toward result bucket
+    const startX = W / 2;
+    const startY = PAD - 10;
+    const endX = PAD + result * colW;
+    const endBucketY = H - 55;
+
+    const frames: { x: number; y: number }[] = [];
+    const totalFrames = 90; // ~3 seconds at 30fps
+
+    for (let f = 0; f <= totalFrames; f++) {
+      const t = f / totalFrames;
+      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      // Add wobble as it bounces off pins
+      const wobble = Math.sin(t * rows * Math.PI * 1.5) * colW * 0.2 * (1 - t);
+      frames.push({
+        x: startX + (endX - startX) * eased + wobble,
+        y: startY + (endBucketY - startY) * eased,
+      });
     }
 
-    const finalBucket = dirs.filter(d => d > 0).length;
-
-    // Animate over 3 seconds
-    let step = 0;
-    const totalSteps = path.length * 15;
-    const startTime = performance.now();
-
-    function animate() {
-      const elapsed = performance.now() - startTime;
-      const progress = Math.min(elapsed / 3000, 1);
-      const idx = Math.min(Math.floor(progress * (path.length - 1)), path.length - 2);
-      const t = (progress * (path.length - 1)) - idx;
-      const [x1, y1] = path[idx];
-      const [x2, y2] = path[idx + 1];
-      const bx = x1 + (x2 - x1) * t;
-      const by = y1 + (y2 - y1) * t;
-
-      drawBoard(ctx, bx, by);
-
-      if (progress < 1) {
-        animRef.current = requestAnimationFrame(animate);
-      } else {
-        drawBoard(ctx, path[path.length - 1][0], 60 + rows * 40 + 20);
-        setTimeout(() => onLand(finalBucket), 300);
+    let i = 0;
+    const tick = () => {
+      if (i >= frames.length) {
+        setLanded(result);
+        onLand(result);
+        return;
       }
-    }
+      setBallPos(frames[i]);
+      i++;
+      animRef.current = requestAnimationFrame(tick);
+    };
+    animRef.current = requestAnimationFrame(tick);
 
-    animRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [dropping]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
-    drawBoard(ctx);
-  }, [rows, risk]);
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+  }, [result, dropping, riskLevel, rows]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={W}
-      height={H}
-      style={{ borderRadius: 12, display: 'block', margin: '0 auto' }}
-    />
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <canvas
+        ref={canvasRef}
+        width={W}
+        height={H}
+        style={{ borderRadius: 12, border: '1px solid #ffffff22', display: 'block' }}
+      />
+      <div style={{ textAlign: 'center', marginTop: 8, fontSize: 12, color: RISK_COLORS[riskLevel] }}>
+        {RISK_LABELS[riskLevel]} Risk
+      </div>
+    </div>
   );
 }

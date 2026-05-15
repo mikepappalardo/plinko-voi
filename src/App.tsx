@@ -1,321 +1,313 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '@txnlab/use-wallet-react';
 import algosdk from 'algosdk';
-import { client, optIn, submitBet, settleBet, getPendingBet } from './contract';
 import PlinkoBoard from './PlinkoBoard';
-import { MULTIPLIERS, ROWS_OPTIONS } from './config';
+import { APP_ID, APP_ADDRESS, ALGOD_URL, MIN_BET, MAX_BET, MULTIPLIERS, ROWS } from './config';
+import './App.css';
 
-type Risk = 'low' | 'mid' | 'high';
-type Phase = 'idle' | 'betting' | 'dropping' | 'settling' | 'done';
+type RiskLevel = 0 | 1 | 2;
+type Phase = 'idle' | 'opting-in' | 'betting' | 'waiting' | 'settling' | 'result';
+
+const client = new algosdk.Algodv2('', ALGOD_URL, '');
+
+const SEL = (sig: string) => algosdk.ABIMethod.fromSignature(sig).getSelector();
 
 export default function App() {
-  const { activeAddress, signTransactions, isReady } = useWallet();
-  const [optedIn, setOptedIn] = useState(false);
-  const [balance, setBalance] = useState(0);
-  const [betAmount, setBetAmount] = useState(1);
-  const [risk, setRisk] = useState<Risk>('mid');
-  const [rows, setRows] = useState(12);
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [landedBucket, setLandedBucket] = useState<number | null>(null);
-  const [payout, setPayout] = useState<number | null>(null);
-  const [txid, setTxid] = useState('');
-  const [error, setError] = useState('');
-  const [pending, setPending] = useState<Awaited<ReturnType<typeof getPendingBet>> | null>(null);
+  const { activeAccount, activeWallet, wallets } = useWallet();
+  const account = activeAccount?.address ?? null;
 
-  const signer = async (txns: algosdk.Transaction[]) => {
-    const encoded = txns.map(t => t.toByte());
-    return signTransactions(encoded);
+  const [betAmount, setBetAmount] = useState(1);
+  const [risk, setRisk] = useState<RiskLevel>(0);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [status, setStatus] = useState('Connect your wallet to play.');
+  const [result, setResult] = useState<number | null>(null);
+  const [payout, setPayout] = useState<number | null>(null);
+  const [isOptedIn, setIsOptedIn] = useState(false);
+  const [pendingRound, setPendingRound] = useState(0); void pendingRound;
+  const [dropping, setDropping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showWallets, setShowWallets] = useState(false);
+
+  const riskLabels = ['Low', 'Mid', 'High'];
+
+  // Sign txns via use-wallet
+  const sign = async (txns: algosdk.Transaction[]): Promise<Uint8Array[]> => {
+    if (!activeWallet) throw new Error('No wallet connected');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (activeWallet as any).transactionSigner(txns, txns.map((_: any, i: number) => i));
   };
 
+  // Poll opt-in + pending state
   useEffect(() => {
-    if (!activeAddress) return;
-    (async () => {
+    if (!account) return;
+    const poll = async () => {
       try {
-        const info = await client.accountInformation(activeAddress).do();
-        setBalance(Number(info.amount) / 1e6);
-        const pb = await getPendingBet(activeAddress);
-        setOptedIn(pb.optedIn);
-        if (pb.round > 0n) setPending(pb);
-      } catch {}
-    })();
-  }, [activeAddress]);
+        const info = await client.accountApplicationInformation(String(account), APP_ID).do();
+        setIsOptedIn(true);
+        const ls = info.appLocalState?.keyValue ?? [];
+        const state: Record<string, number> = {};
+        for (const kv of ls) {
+          const key = typeof kv.key === 'string' ? atob(kv.key) : new TextDecoder().decode(kv.key as Uint8Array);
+          state[key] = Number(kv.value.uint ?? 0);
+        }
+        const pr = state['pRound'] ?? 0;
+        setPendingRound(pr);
 
-  async function handleOptIn() {
-    if (!activeAddress) return;
-    setError('');
-    try {
-      await optIn(signer, activeAddress);
-      setOptedIn(true);
-    } catch (e: any) { setError(e.message); }
-  }
+        if (phase === 'waiting' && pr > 0) {
+          const status = await client.status().do();
+          const cur = Number(status.lastRound);
+          if (cur > pr) {
+            setPhase('settling');
+            setStatus('Block confirmed! Sign to settle...');
+          }
+        }
+      } catch {
+        setIsOptedIn(false);
+      }
+    };
+    const t = setInterval(poll, 3000);
+    poll();
+    return () => clearInterval(t);
+  }, [account, phase]);
 
-  async function handleBet() {
-    if (!activeAddress) return;
-    setError('');
-    setPhase('betting');
+  useEffect(() => {
+    if (account) setStatus('Ready to play!');
+    else setStatus('Connect your wallet to play.');
+  }, [account]);
+
+  const doOptIn = async () => {
+    setError(null);
+    setPhase('opting-in');
+    setStatus('Opting in...');
     try {
-      const microVoi = BigInt(Math.round(betAmount * 1e6));
-      const riskNum = risk === 'low' ? 0 : risk === 'mid' ? 1 : 2;
-      const tid = await submitBet(signer, activeAddress, microVoi, riskNum, rows);
-      setTxid(tid);
-      setPhase('dropping');
+      const sp = await client.getTransactionParams().do();
+      const txn = algosdk.makeApplicationOptInTxnFromObject({
+        sender: account!,
+        suggestedParams: sp,
+        appIndex: APP_ID,
+        appArgs: [SEL('opt_in()void')],
+      });
+      const [signed] = await sign([txn]);
+      const { txid } = await client.sendRawTransaction(signed).do();
+      await algosdk.waitForConfirmation(client, txid, 4);
+      setIsOptedIn(true);
+      setPhase('idle');
+      setStatus('Ready to play!');
     } catch (e: any) {
       setError(e.message);
       setPhase('idle');
     }
-  }
+  };
 
-  async function handleLand(bucket: number) {
-    setLandedBucket(bucket);
-    setPhase('settling');
-    // Wait 1s then settle
-    setTimeout(async () => {
-      try {
-        if (!activeAddress) return;
-        await settleBet(signer, activeAddress);
-        const mults = MULTIPLIERS[risk];
-        const numBuckets = rows + 1;
-        const half = Math.floor(numBuckets / 2);
-        const pos = bucket > half ? rows - bucket : bucket;
-        const mult = mults[Math.min(pos, mults.length - 1)];
-        const pOut = betAmount * mult * 0.97; // after 3% fee
-        setPayout(pOut);
-        setPhase('done');
-      } catch (e: any) {
-        setError(e.message);
-        setPhase('done');
-      }
-    }, 1000);
-  }
-
-  function reset() {
-    setPhase('idle');
-    setLandedBucket(null);
+  const doBet = async () => {
+    setError(null);
+    const microVoi = Math.round(betAmount * 1_000_000);
+    if (microVoi < MIN_BET || microVoi > MAX_BET) {
+      setError(`Bet must be ${MIN_BET / 1e6}–${MAX_BET / 1e6} VOI`);
+      return;
+    }
+    setPhase('betting');
+    setResult(null);
     setPayout(null);
-    setTxid('');
-    setError('');
-  }
+    setDropping(false);
+    setStatus('Sign to submit bet...');
+    try {
+      const sp = await client.getTransactionParams().do();
 
-  const mults = MULTIPLIERS[risk];
+      const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: account!,
+        receiver: APP_ADDRESS,
+        amount: microVoi,
+        suggestedParams: sp,
+      });
+      const callTxn = algosdk.makeApplicationNoOpTxnFromObject({
+        sender: account!,
+        suggestedParams: { ...sp, fee: BigInt(sp.minFee) * 2n, flatFee: true },
+        appIndex: APP_ID,
+        appArgs: [SEL('submit_bet(pay,uint64,uint64)void'), algosdk.encodeUint64(risk), algosdk.encodeUint64(ROWS)],
+      });
+      algosdk.assignGroupID([payTxn, callTxn]);
+      const signed = await sign([payTxn, callTxn]);
+      const { txid } = await client.sendRawTransaction(signed).do();
+      await algosdk.waitForConfirmation(client, txid, 4);
+
+      const ls = await client.accountApplicationInformation(String(account!), APP_ID).do();
+      const kvs = ls.appLocalState?.keyValue ?? [];
+      const state: Record<string, number> = {};
+      for (const kv of kvs) { const k = typeof kv.key === 'string' ? atob(kv.key) : new TextDecoder().decode(kv.key as Uint8Array); state[k] = Number(kv.value.uint ?? 0); }
+      setPendingRound(state['pRound'] ?? 0);
+      setPhase('waiting');
+      setStatus(`Bet submitted! Waiting for block ${(state['pRound'] ?? 0) + 1}...`);
+    } catch (e: any) {
+      setError(e.message);
+      setPhase('idle');
+    }
+  };
+
+  const doSettle = async () => {
+    setError(null);
+    setPhase('settling');
+    setStatus('Sign to settle...');
+    try {
+      const sp = await client.getTransactionParams().do();
+      const txn = algosdk.makeApplicationNoOpTxnFromObject({
+        sender: account!,
+        suggestedParams: { ...sp, fee: BigInt(sp.minFee) * 3n, flatFee: true },
+        appIndex: APP_ID,
+        appArgs: [SEL('settle_bet()void')],
+      });
+      const [signed] = await sign([txn]);
+      const { txid } = await client.sendRawTransaction(signed).do();
+      const txResult = await algosdk.waitForConfirmation(client, txid, 4);
+
+      // Find user payout from inner transactions
+      const innerTxns: any[] = txResult.innerTxns ?? [];
+      let userPayout = 0;
+      for (const it of innerTxns) {
+        const rcv = it?.txn?.txn?.rcv;
+        const amt = it?.txn?.txn?.amt;
+        if (rcv && amt) {
+          const rcvBytes = Uint8Array.from(atob(rcv), ch => ch.charCodeAt(0)); const rcvAddr = algosdk.encodeAddress(rcvBytes);
+          if (rcvAddr === account) userPayout = Number(amt);
+        }
+      }
+
+      const microVoi = Math.round(betAmount * 1_000_000);
+      const fee = Math.floor(microVoi * 300 / 10_000);
+      const net = microVoi - fee;
+      const multActual = net > 0 ? userPayout / net : 0;
+      const riskKey = (['low', 'mid', 'high'] as const)[risk];
+      const mults = MULTIPLIERS[riskKey];
+      let bucketIdx = mults.length - 1;
+      for (let i = 0; i < mults.length; i++) {
+        if (Math.abs(mults[i] - multActual) < 0.15) { bucketIdx = i; break; }
+      }
+
+      setPayout(userPayout / 1e6);
+      setResult(bucketIdx);
+      setDropping(true);
+      setPhase('result');
+      const payoutVoi = (userPayout / 1e6).toFixed(3);
+      setStatus(userPayout > 0 ? `🎉 Won ${payoutVoi} VOI! (${mults[bucketIdx]}x)` : `No payout. Better luck next time!`);
+    } catch (e: any) {
+      setError(e.message);
+      setPhase('idle');
+    }
+  };
+
+  const reset = () => {
+    setPhase('idle');
+    setResult(null);
+    setPayout(null);
+    setDropping(false);
+    setError(null);
+    setStatus('Place your next bet!');
+  };
+
+  const shortAddr = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)',
-      fontFamily: 'Poppins, system-ui, sans-serif',
-      color: '#f8fafc',
-      padding: '24px 16px',
-    }}>
-      <div style={{ maxWidth: 700, margin: '0 auto' }}>
-
-        {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <h1 style={{ fontSize: 42, fontWeight: 800, margin: 0,
-            background: 'linear-gradient(90deg, #38bdf8, #a78bfa)',
-            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
-          }}>
-            🎯 Plinko Drop
-          </h1>
-          <p style={{ color: '#94a3b8', marginTop: 4 }}>On-chain • Voi Network • Provably Fair</p>
-        </div>
-
-        {/* Wallet status */}
-        <div style={{ background: '#1e293b', borderRadius: 12, padding: '12px 20px',
-          marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-        }}>
-          {activeAddress ? (
-            <>
-              <span style={{ color: '#94a3b8', fontSize: 13 }}>
-                {activeAddress.slice(0,8)}...{activeAddress.slice(-6)}
-              </span>
-              <span style={{ color: '#22c55e', fontWeight: 700 }}>{balance.toFixed(2)} VOI</span>
-            </>
+    <div className="app">
+      <header className="header">
+        <div className="logo">🎰 Plinko <span>on Voi</span></div>
+        <div className="header-right">
+          {account ? (
+            <div className="account-badge" onClick={() => activeWallet?.disconnect()} style={{ cursor: 'pointer' }} title="Click to disconnect">
+              {shortAddr(account)}
+            </div>
           ) : (
-            <span style={{ color: '#64748b' }}>Connect your Voi wallet to play</span>
+            <div style={{ position: 'relative' }}>
+              <button className="btn-connect" onClick={() => setShowWallets(v => !v)}>Connect Wallet</button>
+              {showWallets && (
+                <div className="wallet-dropdown">
+                  {wallets.map(w => (
+                    <button key={w.id} className="wallet-option" onClick={() => { w.connect(); setShowWallets(false); }}>
+                      {w.metadata.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
+      </header>
 
-        {/* Opt-in */}
-        {activeAddress && !optedIn && (
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, marginBottom: 24, textAlign: 'center' }}>
-            <p style={{ margin: '0 0 12px', color: '#94a3b8' }}>
-              Opt in to the Plinko contract to start playing
-            </p>
-            <button onClick={handleOptIn} style={btnStyle('#38bdf8')}>
-              Opt In
-            </button>
-          </div>
-        )}
-
-        {/* Pending bet banner */}
-        {pending && pending.round > 0n && phase === 'idle' && (
-          <div style={{ background: '#854d0e44', border: '1px solid #f59e0b', borderRadius: 12,
-            padding: '12px 20px', marginBottom: 20, textAlign: 'center'
-          }}>
-            <p style={{ margin: '0 0 8px', color: '#fcd34d' }}>
-              You have a pending bet of {Number(pending.amount) / 1e6} VOI — claim your result!
-            </p>
-            <button onClick={() => handleLand(0)} style={btnStyle('#f59e0b')}>
-              Claim Result
-            </button>
-          </div>
-        )}
-
-        {/* Controls */}
-        {optedIn && phase === 'idle' && (
-          <div style={{ background: '#1e293b', borderRadius: 16, padding: 24, marginBottom: 24 }}>
-            {/* Risk */}
-            <Label>Risk Level</Label>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-              {(['low','mid','high'] as Risk[]).map(r => (
-                <button key={r} onClick={() => setRisk(r)}
-                  style={{ ...btnStyle(risk===r ? riskColor(r) : '#334155'), flex: 1, textTransform: 'capitalize' }}>
-                  {r}
-                </button>
-              ))}
-            </div>
-
-            {/* Rows */}
-            <Label>Board Size</Label>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-              {ROWS_OPTIONS.map(r => (
-                <button key={r} onClick={() => setRows(r)}
-                  style={{ ...btnStyle(rows===r ? '#38bdf8' : '#334155'), flex: 1 }}>
-                  {r} rows
-                </button>
-              ))}
-            </div>
-
-            {/* Bet amount */}
-            <Label>Bet Amount (VOI)</Label>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              {[0.1, 0.5, 1, 5, 10].map(v => (
-                <button key={v} onClick={() => setBetAmount(v)}
-                  style={{ ...btnStyle(betAmount===v ? '#a78bfa' : '#334155'), flex: 1, fontSize: 13 }}>
-                  {v}
-                </button>
-              ))}
-            </div>
-            <input type="range" min={0.1} max={100} step={0.1} value={betAmount}
-              onChange={e => setBetAmount(Number(e.target.value))}
-              style={{ width: '100%', margin: '8px 0 4px' }} />
-            <div style={{ textAlign: 'center', color: '#a78bfa', fontWeight: 700, fontSize: 18 }}>
-              {betAmount} VOI
-            </div>
-
-            {/* Multiplier preview */}
-            <div style={{ marginTop: 16, display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {mults.map((m, i) => (
-                <div key={i} style={{ background: '#0f172a', borderRadius: 6, padding: '4px 8px',
-                  fontSize: 12, color: m >= 5 ? '#22c55e' : m >= 1 ? '#fbbf24' : '#f87171'
-                }}>
-                  {m}x
-                </div>
-              ))}
-            </div>
-
-            <button onClick={handleBet}
-              style={{ ...btnStyle('#22c55e'), width: '100%', marginTop: 20, fontSize: 18, padding: '14px 0' }}>
-              🎯 Drop Ball — {betAmount} VOI
-            </button>
-          </div>
-        )}
-
-        {/* Plinko board */}
-        {(phase === 'dropping' || phase === 'settling' || phase === 'done') && (
-          <div style={{ marginBottom: 24 }}>
-            <PlinkoBoard
-              rows={rows}
-              risk={risk}
-              dropping={phase === 'dropping'}
-              onLand={handleLand}
-            />
-          </div>
-        )}
-
-        {/* Result */}
-        {phase === 'done' && (
-          <div style={{ background: payout && payout > betAmount ? '#14532d44' : '#7f1d1d44',
-            border: `1px solid ${payout && payout > betAmount ? '#22c55e' : '#ef4444'}`,
-            borderRadius: 16, padding: 28, textAlign: 'center', marginBottom: 24
-          }}>
-            <div style={{ fontSize: 48, marginBottom: 8 }}>
-              {payout && payout > betAmount ? '🎉' : '😔'}
-            </div>
-            {payout !== null ? (
-              <>
-                <div style={{ fontSize: 28, fontWeight: 800 }}>
-                  {payout > betAmount ? '+' : ''}{(payout - betAmount).toFixed(3)} VOI
-                </div>
-                <div style={{ color: '#94a3b8', marginTop: 4 }}>
-                  Paid out {payout.toFixed(3)} VOI
-                </div>
-              </>
-            ) : (
-              <div>Settled on-chain</div>
-            )}
-            {txid && (
-              <a href={`https://explorer.voi.network/explorer/transaction/${txid}`}
-                target="_blank" rel="noopener noreferrer"
-                style={{ color: '#38bdf8', fontSize: 12, display: 'block', marginTop: 8 }}>
-                View transaction ↗
-              </a>
-            )}
-            <button onClick={reset} style={{ ...btnStyle('#38bdf8'), marginTop: 20, padding: '10px 40px' }}>
-              Play Again
-            </button>
-          </div>
-        )}
-
-        {/* Status */}
-        {phase === 'betting' && (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
-            Submitting bet...
-          </div>
-        )}
-        {phase === 'settling' && (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
-            Settling on-chain...
-          </div>
-        )}
-
-        {error && (
-          <div style={{ background: '#7f1d1d44', border: '1px solid #ef4444', borderRadius: 8,
-            padding: '10px 16px', color: '#fca5a5', marginBottom: 16, fontSize: 13
-          }}>
-            {error}
-          </div>
-        )}
-
-        {/* Contract info */}
-        <div style={{ color: '#475569', fontSize: 11, textAlign: 'center', marginTop: 32 }}>
-          App ID: 49241326 • Voi Mainnet • House fee: 3% • Min: 0.1 VOI • Max: 100 VOI
+      <main className="main">
+        <div className="board-col">
+          <PlinkoBoard rows={ROWS} riskLevel={risk} dropping={dropping} result={result} onLand={() => {}} />
         </div>
-      </div>
+
+        <div className="controls-col">
+          <div className="card">
+            <h2>Place Bet</h2>
+
+            <label>Bet Amount (VOI)</label>
+            <div className="bet-row">
+              <input
+                type="number"
+                min={MIN_BET / 1e6} max={MAX_BET / 1e6} step={0.1}
+                value={betAmount}
+                onChange={e => setBetAmount(Number(e.target.value))}
+                disabled={phase !== 'idle'}
+              />
+              <div className="quick-bets">
+                {[0.5, 1, 5, 10].map(v => (
+                  <button key={v} className="btn-quick" onClick={() => setBetAmount(v)} disabled={phase !== 'idle'}>{v}</button>
+                ))}
+              </div>
+            </div>
+
+            <label>Risk Level</label>
+            <div className="risk-row">
+              {riskLabels.map((r, i) => (
+                <button key={r} className={`btn-risk ${risk === i ? 'active' : ''}`}
+                  onClick={() => setRisk(i as RiskLevel)} disabled={phase !== 'idle'}>{r}</button>
+              ))}
+            </div>
+
+            <div className="multiplier-preview">
+              <div className="mult-title">Payouts — {riskLabels[risk]} Risk</div>
+              <div className="mult-grid">
+                {MULTIPLIERS[(['low', 'mid', 'high'] as const)[risk]].map((m, i) => (
+                  <div key={i} className={`mult-item ${m >= 5 ? 'hot' : m >= 1 ? 'warm' : 'cold'}`}>{m}x</div>
+                ))}
+              </div>
+            </div>
+
+            <div className="status-box">{status}</div>
+            {error && <div className="error-box">⚠️ {error}</div>}
+
+            <div className="action-area">
+              {!account && <button className="btn-primary" onClick={() => setShowWallets(true)}>Connect Wallet</button>}
+              {account && !isOptedIn && phase === 'idle' && (
+                <button className="btn-primary" onClick={doOptIn}>Opt In to Play</button>
+              )}
+              {account && isOptedIn && phase === 'idle' && (
+                <button className="btn-primary" onClick={doBet}>Drop Ball — {betAmount} VOI</button>
+              )}
+              {phase === 'waiting' && (
+                <button className="btn-secondary" onClick={doSettle}>Settle Bet (ready)</button>
+              )}
+              {phase === 'opting-in' || phase === 'betting' || phase === 'settling' ? (
+                <button className="btn-secondary" disabled>Processing...</button>
+              ) : null}
+              {phase === 'result' && (
+                <>
+                  <div className={`result-banner ${(payout ?? 0) > 0 ? 'win' : 'loss'}`}>
+                    {(payout ?? 0) > 0 ? `🎉 Won ${payout?.toFixed(3)} VOI!` : '😢 No payout this time'}
+                  </div>
+                  <button className="btn-primary" onClick={reset}>Play Again</button>
+                </>
+              )}
+            </div>
+
+            <div className="info-footer">
+              App ID: <a href={`https://voi.observer/explorer/application/${APP_ID}`} target="_blank" rel="noreferrer">{APP_ID}</a>
+              <br />House fee: 3% | Min: {MIN_BET / 1e6} VOI | Max: {MAX_BET / 1e6} VOI
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600,
-    textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>{children}</div>;
-}
-
-function btnStyle(color: string) {
-  return {
-    background: color + '22',
-    border: `1px solid ${color}`,
-    color: color,
-    borderRadius: 8,
-    padding: '8px 16px',
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: 14,
-    fontFamily: 'inherit',
-    transition: 'all 0.15s',
-  } as React.CSSProperties;
-}
-
-function riskColor(r: Risk) {
-  return r === 'low' ? '#22c55e' : r === 'mid' ? '#f59e0b' : '#ef4444';
 }

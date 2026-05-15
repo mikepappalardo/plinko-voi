@@ -29,7 +29,7 @@ class BettingContract(ARC4Contract):
 
     @arc4.abimethod(allow_actions=["NoOp"])
     def create_application(self) -> None:
-        self.house.value = Account("KZGWTTEQNSTBVFNQNEWKO4KJV6R3DRBZOAR7A36TOUFDHXIVNJUMTELF7U")
+        self.house.value = Account("FJGK236YTKQ5UZRYJK5HQIKL2PSSFO3TWWVL4XIJDFTH3CBSRGURDUFVRA")
         self.total_bets.value = UInt64(0)
         self.total_payout.value = UInt64(0)
         self.min_bet.value = UInt64(100_000)
